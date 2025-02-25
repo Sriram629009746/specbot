@@ -1,0 +1,31 @@
+	
+pdf parsing
+	- check how effectively data is getting parsed
+	- how are tables getting parsed? 
+		- try with ch7
+	- table as img + summary(to help retrieval) + 
+		- summary not good with llama vision model of 7b 
+		- maybe give examples in context for generation
+	- need to tie the table heading to the table image 
+		- maybe during summary
+	=> table parsing using unstructured works okayish
+		1. try pymupdf
+			- with summaries
+			- direct text/table
+		2. need to tie table name to table text for better context
+			- need some preprocessing
+		3. works decently with GPT4. bad with llama 3.2 and deepseek r1 7b need to try bigger open source models like deepseek or llama or qwen
+			- need proper context
+			- for example, if table heading and some table parts are spread in different chunks then they are not retrieved together . try different chunking strategies (basically should stop once a new topic starts)
+		
+	
+	
+chunking
+	- different lengths keeping everything else constant
+	
+eval pipeline
+	- using llm for eval of full process
+
+give whole pdf and ask to generate Q&A
+	- try with 2 chapters first
+	- all possible questions a user of NVME spec might ask
