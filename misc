@@ -1,31 +1,42 @@
-for group in variable_groups:
+def update_select_all(key, group):
+    all_selected = st.session_state[key]
+    for var in group['variable_group']:
+        st.session_state[f"{group['subplot_title']}_{var['name']}"] = all_selected
+
+def update_individual_checkbox(group):
+    select_all_key = f"select_all_{group['subplot_title']}"
+    all_checked = all(st.session_state[f"{group['subplot_title']}_{var['name']}"] for var in group['variable_group'])
+    st.session_state[select_all_key] = all_checked
+
+if uploaded_file is not None:
+    df = pd.read_csv(uploaded_file)
+    df.columns = df.columns.str.strip()
+    age_column = 'Age'
+    
+    with open('config.json', 'r') as f:
+        variable_groups = json.load(f)
+    
+    selected_groups = []
+    st.sidebar.header("Select Variables to Display")
+    
+    for group in variable_groups:
         with st.sidebar.expander(f"Select Variables for {group['subplot_title']}"):
             select_all_key = f"select_all_{group['subplot_title']}"
-            
             if select_all_key not in st.session_state:
                 st.session_state[select_all_key] = all(var.get("default_enable", "no") == "yes" for var in group['variable_group'])
             
-            select_all = st.checkbox("Select All", value=st.session_state[select_all_key], key=select_all_key)
+            select_all = st.checkbox("Select All", value=st.session_state[select_all_key], key=select_all_key, on_change=update_select_all, args=(select_all_key, group))
             
             for var in group['variable_group']:
                 var_key = f"{group['subplot_title']}_{var['name']}"
                 if var_key not in st.session_state:
                     st.session_state[var_key] = var.get("default_enable", "no") == "yes"
-                
-                selections.setdefault(group['subplot_title'], {})[var['name']] = st.checkbox(var['name'], value=st.session_state[var_key], key=var_key)
-                
-            if select_all:
-                for var in group['variable_group']:
-                    st.session_state[f"{group['subplot_title']}_{var['name']}"] = True
-            else:
-                if not all(st.session_state[f"{group['subplot_title']}_{var['name']}"] for var in group['variable_group']):
-                    st.session_state[select_all_key] = False
+                st.checkbox(var['name'], value=st.session_state[var_key], key=var_key, on_change=update_individual_checkbox, args=(group,))
 
     if st.sidebar.button("Submit"):
         selected_groups = [group for group in variable_groups if any(st.session_state[f"{group['subplot_title']}_{var['name']}"] for var in group['variable_group'])]
-        
         if selected_groups:
             plotter = DataPlotter(df, age_column, selected_groups)
             plotter.plot()
         else:
-            st.warning("Please select at least one variable to display."
+            st.warning("Please select at least one variable to display.")
