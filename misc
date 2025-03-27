@@ -242,3 +242,155 @@ fig.update_layout(
 
 # Show plot
 fig.show()
+
+
+##OOP
+
+import plotly.graph_objects as go
+import pandas as pd
+import plotly.express as px
+import random
+from plotly.subplots import make_subplots
+
+class CommandQueuePlotter:
+    def __init__(self, df):
+        self.df = df
+        self.fig = make_subplots(
+            rows=2, cols=1, shared_xaxes=True, 
+            vertical_spacing=0.1,
+            subplot_titles=["Command Execution Timeline", "Number of Commands in Queue"]
+        )
+        self.cmd_colors = self.assign_colors()
+
+    def assign_colors(self):
+        """Assigns unique colors to each command."""
+        plotly_colors = px.colors.qualitative.Light24 + px.colors.qualitative.Alphabet + px.colors.qualitative.Dark24
+        num_plotly_colors = len(plotly_colors)
+
+        unique_cmds = self.df["command"].unique()
+        if len(unique_cmds) > num_plotly_colors:
+            extra_colors = px.colors.sample_colorscale("rainbow", [i / len(unique_cmds) for i in range(len(unique_cmds))])
+            all_colors = plotly_colors + extra_colors
+        else:
+            all_colors = plotly_colors
+
+        return {cmd: all_colors[i % len(all_colors)] for i, cmd in enumerate(unique_cmds)}
+
+    def add_command_timeline(self):
+        """Adds the command execution timeline as the first subplot."""
+        for _, row in self.df.iterrows():
+            hover_text = (
+                f"Command: {row['command']}<br>"
+                f"Start Time: {row['start time']} µs<br>"
+                f"End Time: {row['end time']} µs<br>"
+                f"Time Taken: {row['end time'] - row['start time']} µs<br>"
+                f"Status: {row['status']}<br>"
+                f"Details: {row['other details']}"
+            )
+
+            self.fig.add_trace(go.Scatter(
+                x=[row["start time"], row["end time"]],
+                y=[row["position"], row["position"]],
+                mode="lines",
+                line=dict(width=2, color=self.cmd_colors[row["command"]]),
+                legendgroup=row["command"],
+                showlegend=False,  # Avoid duplicate legends
+                hoverinfo="text",
+                text=hover_text
+            ), row=1, col=1)
+
+        # Add one legend entry per command
+        for cmd, color in self.cmd_colors.items():
+            self.fig.add_trace(go.Scatter(
+                x=[None],  # Empty trace for legend
+                y=[None],
+                mode="lines",
+                line=dict(width=2, color=color),
+                name=cmd,
+                legendgroup=cmd
+            ), row=1, col=1)
+
+    def add_queue_size_plot(self):
+        """Adds the queue size subplot, counting active commands at each microsecond."""
+        time_series = sorted(set(self.df["start time"]).union(set(self.df["end time"])))
+        queue_counts = {t: 0 for t in time_series}
+
+        # Compute queue size at each timestamp
+        active_cmds = 0
+        for t in time_series:
+            active_cmds += sum(self.df["start time"] == t)  # New cmds start
+            active_cmds -= sum(self.df["end time"] == t)    # Cmds finish
+            queue_counts[t] = max(0, active_cmds)  # Ensure no negatives
+
+        self.fig.add_trace(go.Scatter(
+            x=list(queue_counts.keys()),
+            y=list(queue_counts.values()),
+            mode="lines",
+            line=dict(width=2, color="blue"),
+            name="Commands in Queue"
+        ), row=2, col=1)
+
+    def configure_layout(self):
+        """Sets up the layout and axis configurations."""
+        self.fig.update_layout(
+            title="Command Execution Timeline & Queue Size",
+            height=1000,
+            xaxis=dict(
+                title="Time (µs)",
+                range=[0, 50000],  # Initial range but zoomable
+                showline=True,
+                showgrid=True,
+                rangeslider_visible=False,
+                showticklabels=True
+            ),
+            xaxis2=dict(
+                title="Time (µs)",  
+                range=[0, 50000],  
+                showline=True,
+                showgrid=True,
+                rangeslider_visible=False,
+                showticklabels=True
+            ),
+            yaxis=dict(
+                title="Queue Position",
+                tickmode="array",
+                tickvals=sorted(self.df["position"].unique()),  
+                showgrid=True,
+                zeroline=False,
+                fixedrange=True  # Keeps Y-axis static
+            ),
+            yaxis2=dict(
+                title="Commands in Queue",
+                showgrid=True,
+                zeroline=False
+            ),
+            legend=dict(title="Commands", traceorder="normal", bgcolor="rgba(255,255,255,0.8)")
+        )
+
+    def plot(self):
+        """Generates the plot with subplots and displays it."""
+        self.add_command_timeline()
+        self.add_queue_size_plot()
+        self.configure_layout()
+        self.fig.show()
+
+
+# ---- Sample Data ----
+num_commands = 100
+commands = [f"cmd_{i}" for i in range(1, num_commands + 1)]
+random.shuffle(commands)
+
+data = {
+    "command": [random.choice(commands) for _ in range(500)],
+    "start time": sorted(random.sample(range(1, 1000000, 10), 500)),
+    "end time": [t + random.randint(10, 500) for t in sorted(random.sample(range(1, 1000000, 10), 500))],
+    "position": [random.randint(1, 32) for _ in range(500)],
+    "status": [random.choice(["success", "fail"]) for _ in range(500)],
+    "other details": [f"info_{i}" for i in range(500)]
+}
+
+df = pd.DataFrame(data).sort_values(by="start time").reset_index(drop=True)
+
+# ---- Create & Show Plot ----
+plotter = CommandQueuePlotter(df)
+plotter.plot()
