@@ -394,3 +394,75 @@ df = pd.DataFrame(data).sort_values(by="start time").reset_index(drop=True)
 # ---- Create & Show Plot ----
 plotter = CommandQueuePlotter(df)
 plotter.plot()
+
+
+
+### dist
+
+import plotly.graph_objects as go
+import pandas as pd
+import numpy as np
+from plotly.subplots import make_subplots
+
+# Simulate realistic non-uniform command distribution
+np.random.seed(42)
+num_cmds = 50000  # Total number of commands
+cmd_types = [f'CMD_{i}' for i in range(1, 101)]  # 100 unique command types
+
+# Assign probabilities so some commands appear more frequently
+cmd_probabilities = np.random.power(a=5, size=100)  # Skewed distribution
+cmd_probabilities /= cmd_probabilities.sum()  # Normalize to sum to 1
+
+# Generate command names based on weighted probabilities
+cmd_names = np.random.choice(cmd_types, size=num_cmds, p=cmd_probabilities)
+
+# Assign command types with distinct latency distributions for each type
+cmd_categories = []
+time_elapsed = []
+
+for cmd in cmd_names:
+    if np.random.rand() < 0.33:  # Assign 'read' type to ~33% of commands
+        cmd_categories.append('read')
+        time_elapsed.append(np.random.exponential(scale=40))  # Shorter latencies for read
+    elif np.random.rand() < 0.66:  # Assign 'write' type to ~33% of commands
+        cmd_categories.append('write')
+        time_elapsed.append(np.random.exponential(scale=100))  # Longer latencies for write
+    else:  # Assign 'admin' type to ~33% of commands
+        cmd_categories.append('admin')
+        time_elapsed.append(np.random.exponential(scale=70))  # Different latencies for admin
+
+# Create DataFrame
+df = pd.DataFrame({'Command': cmd_names, 'Command Type': cmd_categories, 'Time Elapsed': time_elapsed})
+
+# Aggregate command counts and compute percentages
+cmd_counts = df['Command'].value_counts().reset_index()
+cmd_counts.columns = ['Command', 'Count']
+cmd_counts['Percentage'] = (cmd_counts['Count'] / cmd_counts['Count'].sum()) * 100
+
+# Compute latency statistics per command
+stats = df.groupby('Command')['Time Elapsed'].agg(['mean', 'median', 'min', 'max']).reset_index()
+cmd_counts = cmd_counts.merge(stats, on='Command')
+
+# Create a 1x1 subplot figure
+fig = make_subplots(rows=1, cols=1)
+
+# Add the bar chart to the subplot
+fig.add_trace(
+    go.Bar(
+        x=cmd_counts['Command'],
+        y=cmd_counts['Percentage'],
+        name="All Commands",
+        hovertemplate="Command: %{x}<br>Mean: %{customdata[0]:.2f}<br>Median: %{customdata[1]:.2f}<br>Min: %{customdata[2]:.2f}<br>Max: %{customdata[3]:.2f}",
+        customdata=cmd_counts[['mean', 'median', 'min', 'max']].values
+    ),
+    row=1, col=1
+)
+
+# Update layout
+fig.update_layout(
+    title="Command Distribution",
+    xaxis_title='Command Name',
+    yaxis_title='Count Percentage (%)',
+)
+
+fig.show()
