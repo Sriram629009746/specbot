@@ -466,3 +466,152 @@ fig.update_layout(
 )
 
 fig.show()
+
+
+### 
+
+import plotly.graph_objects as go
+import pandas as pd
+import numpy as np
+
+# Generate sample DataFrame with 10k data points
+np.random.seed(42)
+data = {
+    'index': np.arange(10000),
+    'cmd': np.random.choice(['read', 'write', 'erase', 'invalid'], 10000, p=[0.3, 0.3, 0.3, 0.1]),
+    'start_address': np.random.randint(0, 100000, 10000),
+    'length': np.random.randint(1, 100, 10000)
+}
+df = pd.DataFrame(data)
+
+# Filter valid command types and define colors
+valid_cmds = {'read': 'red', 'write': 'green', 'erase': 'blue'}
+df = df[df['cmd'].isin(valid_cmds.keys())]
+
+# Create traces
+fig = go.Figure()
+for cmd, color in valid_cmds.items():
+    subset = df[df['cmd'] == cmd]
+    fig.add_trace(go.Scatter(
+        x=subset['index'],
+        y=subset['start_address'],
+        mode='markers',
+        marker=dict(color=color, size=5, opacity=0.6),
+        name=cmd
+    ))
+
+# Update layout
+fig.update_layout(
+    title="Command Start Address Visualization",
+    xaxis_title="Index",
+    yaxis_title="Start Address",
+    showlegend=True,
+    xaxis=dict(range=[0, 100]),  # Restrict visible range to first 100 points
+    yaxis=dict(fixedrange=True)  # Restrict visible range to first 100 points
+)
+
+# Show plot
+fig.show()
+
+
+### Lines
+import plotly.graph_objects as go
+import pandas as pd
+import numpy as np
+
+# Generate sample data
+num_points = 1000
+np.random.seed(42)
+index = np.arange(num_points)
+cmds = np.random.choice(["read", "write", "erase"], num_points)
+start_addresses = np.random.randint(0, 1000, num_points)
+lengths = np.random.randint(10, 500, num_points)
+
+data = {
+    "index": index,
+    "cmd": cmds,
+    "start_address": start_addresses,
+    "length": lengths
+}
+df = pd.DataFrame(data)
+
+# Define color mapping for commands
+cmd_colors = {"read": "red", "write": "green", "erase": "blue"}
+
+# Create figure
+fig = go.Figure()
+
+# Add vertical lines for each valid command
+for _, row in df.iterrows():
+    fig.add_trace(go.Scattergl(
+        x=[row["index"], row["index"]],
+        y=[row["start_address"], row["start_address"] + row["length"]],
+        mode="lines",
+        line=dict(color=cmd_colors[row["cmd"]], width=2),
+        name=row["cmd"],
+        showlegend=False  # Avoid legend duplication
+    ))
+
+# Update layout with restricted x-axis window
+fig.update_layout(
+    title="Command Start Address Timeline",
+    xaxis_title="Index",
+    yaxis_title="Start Address",
+    xaxis=dict(range=[0, 100]),
+    yaxis=dict(fixedrange=True),
+    showlegend=True
+)
+
+# Show plot
+fig.show()
+
+#pie
+import pandas as pd
+import plotly.graph_objects as go
+import plotly.subplots as sp
+
+# Generate sample data
+data = {
+    "index": range(15),
+    "cmd": ["read", "write", "read", "write", "read", "write", "erase", "read", "write", "read",
+            "write", "erase", "read", "write", "read"],
+    "start_address": [1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000,
+                      11000, 12000, 13000, 14000, 15000],
+    "length": [512, 1024, 512, 2048, 1024, 512, 4096, 512, 1024, 2048,
+               512, 8192, 1024, 2048, 512]
+}
+
+df = pd.DataFrame(data)
+
+# Filter read and write commands separately
+df_read = df[df["cmd"] == "read"]
+df_write = df[df["cmd"] == "write"]
+
+# Create a subplot layout for side-by-side pie charts
+fig = sp.make_subplots(rows=1, cols=2, subplot_titles=["Read Command Lengths", "Write Command Lengths"], specs=[[{"type": "domain"}, {"type": "domain"}]])
+
+# Add Read Pie Chart
+if not df_read.empty:
+    read_lengths = df_read["length"].value_counts()
+    fig.add_trace(go.Pie(
+        labels=read_lengths.index,
+        values=read_lengths.values,
+        hole=0.3,
+        hovertemplate="Length: %{label}<br>Percentage: %{percent}<br>Count: %{value}<extra></extra>"
+    ), row=1, col=1)
+
+# Add Write Pie Chart
+if not df_write.empty:
+    write_lengths = df_write["length"].value_counts()
+    fig.add_trace(go.Pie(
+        labels=write_lengths.index,
+        values=write_lengths.values,
+        hole=0.3,
+        hovertemplate="Length: %{label}<br>Percentage: %{percent}<br>Count: %{value}<extra></extra>"
+    ), row=1, col=2)
+
+# Update layout
+fig.update_layout(title_text="Read vs Write Command Lengths", showlegend=True)
+
+# Show figure
+fig.show()
