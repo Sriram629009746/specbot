@@ -615,3 +615,218 @@ fig.update_layout(title_text="Read vs Write Command Lengths", showlegend=True)
 
 # Show figure
 fig.show()
+
+
+# DASH
+import pandas as pd
+import numpy as np
+import plotly.graph_objects as go
+from dash import Dash, dcc, html, Input, Output, State, ctx, no_update
+import dash_bootstrap_components as dbc
+# --- Subplot Support ---
+from plotly.subplots import make_subplots
+
+
+# --- Sample Data Generation ---
+np.random.seed(42)
+commands = ["read", "write", "trim", "verify"]
+
+data = {
+    "command": np.random.choice(commands, 500),
+    "start time": sorted(np.random.randint(0, 50000, 500)),
+    "duration": np.random.randint(10, 1000, 500),
+    "position": np.random.randint(1, 33, 500),
+    "status": np.random.choice(["success", "fail"], 500),
+    "other details": [f"meta_{i}" for i in range(500)]
+}
+df = pd.DataFrame(data)
+df["end time"] = df["start time"] + df["duration"]
+
+# --- Color Map for 4 Commands ---
+cmd_colors = {
+    "read": "blue",
+    "write": "green",
+    "trim": "orange",
+    "verify": "purple"
+}
+
+# --- Helper Function for Queue Depth ---
+def compute_queue_depth(df, max_time):
+    timeline = np.zeros(max_time + 1, dtype=int)
+    for _, row in df.iterrows():
+        timeline[row["start time"]:row["end time"]] += 1
+    return pd.Series(timeline)
+
+# --- Dash App and Layout ---
+app = Dash(__name__, external_stylesheets=[dbc.themes.BOOTSTRAP])
+
+'''
+app.layout = html.Div([
+    html.H2("Command Timeline & Queue Depth (4 Commands)"),
+    dcc.Graph(id="cmd-plot"),
+    dbc.Button("Recompute Stats (Pan)", id="recompute-btn", n_clicks=0, className="mb-2"),
+    html.Div(id="stats-output", style={"whiteSpace": "pre-wrap", "fontFamily": "monospace"})
+])
+'''
+
+# --- Plot Builder Function ---
+def build_figure(df, x_range=None):
+    max_time = int(df["end time"].max())
+    fig = make_subplots(rows=2, cols=1, shared_xaxes=True,
+                        row_heights=[0.6, 0.4], vertical_spacing=0.05,
+                        subplot_titles=("Command Timeline", "Queue Depth"))
+
+    # Command Timeline
+    for _, row in df.iterrows():
+        hover_text = (
+            f"Command: {row['command']}<br>"
+            f"Start: {row['start time']} µs<br>"
+            f"End: {row['end time']} µs<br>"
+            f"Latency: {row['end time'] - row['start time']} µs<br>"
+            f"Status: {row['status']}<br>"
+            f"Details: {row['other details']}"
+        )
+        fig.add_trace(go.Scatter(
+            x=[row["start time"], row["end time"]],
+            y=[row["position"]] * 2,
+            mode="lines",
+            line=dict(color=cmd_colors[row["command"]], width=2),
+            name=row["command"],
+            legendgroup=row["command"],
+            showlegend=False,
+            hoverinfo="text",
+            text=hover_text
+        ), row=1, col=1)
+
+    # Add one legend per command
+    for cmd, color in cmd_colors.items():
+        fig.add_trace(go.Scatter(
+            x=[None], y=[None],
+            mode="lines",
+            line=dict(color=color, width=2),
+            name=cmd,
+            legendgroup=cmd
+        ), row=1, col=1)
+
+    # Queue Depth
+    depth = compute_queue_depth(df, max_time)
+    fig.add_trace(go.Scatter(
+        x=depth.index,
+        y=depth.values,
+        mode="lines",
+        name="Queue Depth",
+        showlegend=False,
+        line=dict(color="black")
+    ), row=2, col=1)
+
+    '''
+    fig.update_layout(
+        height=700,
+        margin=dict(t=50, b=40),
+        xaxis_range=x_range or [0, 5000],
+        yaxis=dict(title="Queue Position", fixedrange=True),
+        yaxis2=dict(title="Depth", fixedrange=True),
+    )
+    '''
+    fig.update_layout(
+        height=700,
+        margin=dict(t=50, b=40),
+        yaxis=dict(title="Queue Position", fixedrange=True),
+        yaxis2=dict(title="Depth", fixedrange=True),
+    )
+
+    if x_range is not None:
+        fig.update_xaxes(range=x_range)
+
+    return fig
+
+
+app.layout = html.Div([
+    html.H2("Command Timeline & Queue Depth (4 Commands)"),
+    dcc.Graph(
+        id="cmd-plot",
+        figure=build_figure(df),  # Renders once at startup
+        config={"scrollZoom": True}
+    ),
+    dbc.Button("Recompute Stats (Pan)", id="recompute-btn", n_clicks=0, className="mb-2"),
+    html.Div(id="stats-output", style={"whiteSpace": "pre-wrap", "fontFamily": "monospace"})
+])
+
+
+# --- Callback: Update on Zoom/Autoscale or Button Confirm ---
+@app.callback(
+    Output("stats-output", "children"),
+    Input("cmd-plot", "relayoutData"),
+    Input("recompute-btn", "n_clicks"),
+)
+def update_stats(relayout_data, n_clicks):
+    triggered = ctx.triggered_id
+    x_range = [0, 5000]
+
+    # Determine x_range from relayoutData
+    if relayout_data:
+        if "xaxis.range[0]" in relayout_data:
+            x_range = [relayout_data["xaxis.range[0]"], relayout_data["xaxis.range[1]"]]
+        elif "xaxis.autorange" in relayout_data:
+            x_range = [df["start time"].min(), df["end time"].max()]
+        else:
+            # Don't recompute for panning unless button clicked
+            if triggered != "recompute-btn":
+                return no_update
+
+    # This line ensures stats recompute only for zoom/autoscale or button
+    if triggered == "recompute-btn" or "xaxis.range[0]" in (relayout_data or {}) or "xaxis.autorange" in (relayout_data or {}):
+        df_window = df[(df["start time"] <= x_range[1]) & (df["end time"] >= x_range[0])]
+
+        if len(df_window) == 0:
+            return "No commands in current view."
+
+        stats = ""
+        for cmd in df_window["command"].unique():
+            subset = df_window[df_window["command"] == cmd]
+            avg_latency = np.mean(subset["end time"] - subset["start time"])
+            stats += f"{cmd:>6}: count={len(subset):<3}  avg latency={avg_latency:.1f} µs\n"
+        return stats
+
+    return no_update
+'''
+def update_plot(relayout_data, n_clicks, current_fig):
+    triggered = ctx.triggered_id
+    x_range = [0, 5000]  # Default
+
+    if relayout_data:
+        if "xaxis.range[0]" in relayout_data:
+            x_range = [
+                float(relayout_data["xaxis.range[0]"]),
+                float(relayout_data["xaxis.range[1]"])
+            ]
+        elif "xaxis.autorange" in relayout_data:
+            x_range = [df["start time"].min(), df["end time"].max()]
+        else:
+            # For pan or other interactions that don't explicitly update range
+            return current_fig, no_update
+
+    if triggered in ("cmd-plot", "recompute-btn", None):
+        df_window = df[(df["start time"] <= x_range[1]) & (df["end time"] >= x_range[0])]
+        fig = build_figure(df_window, x_range)
+
+        if df_window.empty:
+            stats = "No commands in current view."
+        else:
+            stats_lines = []
+            for cmd in df_window["command"].unique():
+                subset = df_window[df_window["command"] == cmd]
+                avg_latency = np.mean(subset["end time"] - subset["start time"])
+                stats_lines.append(f"{cmd:>6}: count={len(subset):<3}  avg latency={avg_latency:.1f} µs")
+            stats = "\n".join(stats_lines)
+
+        return fig, stats
+
+    return current_fig, no_update
+    
+'''
+
+# --- Run Server ---
+if __name__ == "__main__":
+    app.run(debug=True)
+
