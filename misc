@@ -826,6 +826,99 @@ def update_plot(relayout_data, n_clicks, current_fig):
     
 '''
 
+
+#### PC
+import pandas as pd
+import plotly.graph_objects as go
+import plotly.subplots as sp
+
+# Generate sample data
+data = {
+    "index": range(15),
+    "cmd": ["read", "write", "read", "write", "read", "write", "erase", "read", "write", "read",
+            "write", "erase", "read", "write", "read"],
+    "start_address": [1000, 2000, 3000, 4000, 5000, 6000, 7000, 8000, 9000, 10000, 
+                      11000, 12000, 13000, 14000, 15000],
+    "length": [512, 1024, 512, 2048, 1024, 512, 4096, 512, 1024, 2048,
+               512, 8192, 1024, 2048, 512]
+}
+
+df = pd.DataFrame(data)
+
+# Filter read and write commands
+df_read = df[df["cmd"] == "read"]
+df_write = df[df["cmd"] == "write"]
+
+# Create subplot layout
+fig = sp.make_subplots(
+    rows=1, cols=2,
+    specs=[[{"type": "domain"}, {"type": "domain"}]],
+    subplot_titles=["Read Command Lengths", "Write Command Lengths"]
+)
+
+# Color palette
+colors = ["#636EFA", "#EF553B", "#00CC96", "#AB63FA", "#FFA15A"]
+
+# Read pie data
+read_lengths = df_read["length"].value_counts()
+read_labels = read_lengths.index.astype(str)
+read_values = read_lengths.values
+fig.add_trace(go.Pie(
+    labels=read_labels,
+    values=read_values,
+    hole=0.3,
+    marker=dict(colors=colors),
+    hovertemplate="Length: %{label}<br>Percentage: %{percent}<br>Count: %{value}<extra></extra>",
+    showlegend=False
+), row=1, col=1)
+
+# Write pie data
+write_lengths = df_write["length"].value_counts()
+write_labels = write_lengths.index.astype(str)
+write_values = write_lengths.values
+fig.add_trace(go.Pie(
+    labels=write_labels,
+    values=write_values,
+    hole=0.3,
+    marker=dict(colors=colors),
+    hovertemplate="Length: %{label}<br>Percentage: %{percent}<br>Count: %{value}<extra></extra>",
+    showlegend=False
+), row=1, col=2)
+
+# Move pie charts downward to add space between title and pie
+fig.data[0].domain['y'] = [0.10, 0.90]  # read pie
+fig.data[1].domain['y'] = [0.10, 0.80]  # write pie
+
+# Custom legends
+legend_y_start = 0.75  # lower to match new pie positions
+spacing = 0.05
+
+# Read legend
+fig.add_annotation(text="<b>Read Chunk Size</b>", x=0.45, y=legend_y_start + 0.10, showarrow=False, xanchor="left")
+for i, (label, value) in enumerate(zip(read_labels, read_values)):
+    fig.add_shape(type="rect", x0=0.45, x1=0.47, y0=legend_y_start - i * spacing, y1=legend_y_start - i * spacing + 0.03,
+                  fillcolor=colors[i % len(colors)], line=dict(width=0))
+    fig.add_annotation(text=f"{label} ({value})", x=0.475, y=legend_y_start - i * spacing + 0.015,
+                       showarrow=False, xanchor="left", yanchor="middle")
+
+# Write legend
+fig.add_annotation(text="<b>Write Chunk Size</b>", x=0.95, y=legend_y_start + 0.10, showarrow=False, xanchor="left")
+for i, (label, value) in enumerate(zip(write_labels, write_values)):
+    fig.add_shape(type="rect", x0=0.95, x1=0.97, y0=legend_y_start - i * spacing, y1=legend_y_start - i * spacing + 0.03,
+                  fillcolor=colors[i % len(colors)], line=dict(width=0))
+    fig.add_annotation(text=f"{label} ({value})", x=0.975, y=legend_y_start - i * spacing + 0.015,
+                       showarrow=False, xanchor="left", yanchor="middle")
+
+# Layout tweaks
+fig.update_layout(
+    #title_text="Read vs Write Command Lengths",
+    margin=dict(l=40, r=40, t=80),
+    height=500
+)
+
+fig.show()
+
+
 # --- Run Server ---
 if __name__ == "__main__":
     app.run(debug=True)
