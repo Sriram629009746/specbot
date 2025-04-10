@@ -923,3 +923,21 @@ fig.show()
 if __name__ == "__main__":
     app.run(debug=True)
 
+
+
+######## HTML
+html.Div([
+        html.Div(
+            dcc.Graph(id="main-plot", figure=build_main_figure(df), config={"scrollZoom": True}),
+            style={"flex": "1"}
+        ),
+        html.Div([
+            html.Div(id="stats-output", style={
+                "whiteSpace": "pre-wrap",
+                "fontFamily": "monospace",
+                "marginLeft": "0px",
+                "marginTop": "500px"
+            }),
+        ], style={"width": "220px", "display": "flex", "flexDirection": "column", "alignItems": "left"})
+    ], style={"display": "flex", "alignItems": "start"}),
+    dbc.Button("Recompute Stats (Pan)", id="recompute-btn", n_clicks=0, className="mb-2", style={"marginTop": "10px"}),
