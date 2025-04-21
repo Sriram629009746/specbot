@@ -1,0 +1,5 @@
+{
+  "Product_A": ["read_count", "write_count", "temperature"],
+  "Product_B": ["read_count", "write_count", "erase_count", "errors"],
+  "Product_C": ["read_count", "write_count", "erase_count", "temperature", "errors"]
+}
