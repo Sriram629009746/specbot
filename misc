@@ -941,3 +941,54 @@ html.Div([
         ], style={"width": "220px", "display": "flex", "flexDirection": "column", "alignItems": "left"})
     ], style={"display": "flex", "alignItems": "start"}),
     dbc.Button("Recompute Stats (Pan)", id="recompute-btn", n_clicks=0, className="mb-2", style={"marginTop": "10px"}),
+
+
+
+### DIST
+import pandas as pd
+import numpy as np
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+
+# Sample latency data in milliseconds (replace with your actual df)
+np.random.seed(0)
+df = pd.DataFrame({'latency': np.random.exponential(scale=300, size=10000)})  # in ms
+
+# Parameters
+bin_width_ms = 10
+max_bin_edge = 1200  # up to 1.2s (1200ms)
+
+# Create regular bins up to 1200ms
+bins = np.arange(0, max_bin_edge, bin_width_ms)
+labels = [f"{int(start)}-{int(start + bin_width_ms)}ms" for start in bins]
+
+# Add a final bin for anything above 1200ms
+bins = np.append(bins, np.inf)
+labels.append(f"{max_bin_edge}+ms")
+
+# Digitize latencies into bins
+bin_indices = np.digitize(df['latency'], bins, right=False)
+counts = np.bincount(bin_indices, minlength=len(labels)+1)[1:len(labels)+1]  # skip 0 index
+
+# Create 1x1 subplot and add bar chart
+fig = make_subplots(rows=1, cols=1)
+
+fig.add_trace(
+    go.Bar(
+        x=labels,
+        y=counts,
+        marker_color='royalblue',
+        name='Latency Counts'
+    ),
+    row=1, col=1
+)
+
+fig.update_layout(
+    title='Latency Distribution (ms)',
+    xaxis_title='Latency Bin',
+    yaxis_title='Command Count',
+    bargap=0.1,
+    showlegend=False
+)
+
+fig.show()
