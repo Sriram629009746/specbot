@@ -1,7 +1,7 @@
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
-from dash import Dash, dcc, html, Input, Output, State, ctx, no_update
+from dash import Dash, dcc, html, Input, Output, State, ctx, no_update, callback_context
 import dash_bootstrap_components as dbc
 from plotly.subplots import make_subplots
 import base64
@@ -13,6 +13,11 @@ from flask import Flask
 
 # Import your existing log parser here
 # from log_parser import parse_log_file
+
+# Configuration
+#MAX_CMDS_PER_PAGE = 100000  # Maximum commands to render per page
+MAX_CMDS_PER_PAGE = 100  # Maximum commands to render per page
+RANGE_INCREMENT = MAX_CMDS_PER_PAGE  # How many commands to increment for dropdown options
 
 # Placeholder for your parser function - replace this with your actual parser
 def parse_log_file(content):
@@ -49,7 +54,12 @@ class DataProcessor:
     def __init__(self, df):
         self.df = df
         # Add index column to track command order
-        self.df = self.df.reset_index().rename(columns={"index": "cmd_index"})
+        #self.df = self.df.reset_index().rename(columns={"index": "cmd_index"})
+        #self.df = self.df.reset_index().rename(columns={"index": "cmd_index"})
+
+        print("erear")
+
+        print(self.df.columns)
         self.cmd_colors = {
             "read": "blue",
             "write": "green",
@@ -71,14 +81,22 @@ class DataProcessor:
         idx0, idx1 = idx_range
         return self.df[(self.df["cmd_index"] >= idx0) & (self.df["cmd_index"] <= idx1)]
 
-    def compute_queue_depth(self, max_time):
+    def compute_queue_depth(self, df, max_time):
+        """Compute queue depth for the provided dataframe"""
         timeline = np.zeros(max_time + 1, dtype=int)
-        for _, row in self.df.iterrows():
+        for _, row in df.iterrows():
             timeline[row["start time"]:row["end time"] + 1] += 1
         return pd.Series(timeline)
 
-    def get_max_time(self):
-        return int(self.df["end time"].max())
+    def get_max_time(self, df=None):
+        """Get maximum time value from dataframe, optionally pass filtered df"""
+        if df is None:
+            df = self.df
+        return int(df["end time"].max())
+
+    def get_cmd_count(self):
+        """Get total command count"""
+        return len(self.df)
 
     def index_to_time_range(self, idx_range):
         if idx_range is None:
@@ -102,9 +120,11 @@ class DataProcessor:
 
         return [filtered["cmd_index"].min(), filtered["cmd_index"].max()]
 
-    def calculate_cmd_stats(self, time_range=None):
-        """Calculate command-wise statistics for the given time range"""
-        df = self.filter_by_time_range(time_range) if time_range else self.df
+    def calculate_cmd_stats(self, df=None, time_range=None):
+        """Calculate command-wise statistics for the given time range or dataframe"""
+        return None
+        if df is None:
+            df = self.filter_by_time_range(time_range) if time_range else self.df
 
         stats = {}
         for cmd in df["command"].unique():
@@ -128,9 +148,10 @@ class DataProcessor:
 
         return stats
 
-    def get_chunk_size_distribution(self, command_type, time_range=None):
+    def get_chunk_size_distribution(self, command_type, df=None, time_range=None):
         """Get chunk size distribution for a specific command type"""
-        df = self.filter_by_time_range(time_range) if time_range else self.df
+        if df is None:
+            df = self.filter_by_time_range(time_range) if time_range else self.df
         cmd_df = df[df["command"] == command_type]
 
         if cmd_df.empty:
@@ -143,7 +164,6 @@ class DataProcessor:
         formatted_counts = {f"0x{size:X}": count for size, count in chunk_counts.items()}
 
         return formatted_counts
-
 
 class VisualizationBuilder:
     def __init__(self, data_processor):
@@ -186,7 +206,7 @@ class VisualizationBuilder:
                 text=texts
             ), row=1, col=1)
 
-        depth = self.data_processor.compute_queue_depth(max_time)
+        depth = self.data_processor.compute_queue_depth(df, max_time)
         step_x = []
         step_y = []
         prev_qd = depth.iloc[0]
@@ -298,8 +318,8 @@ class VisualizationBuilder:
                             specs=[[{"type": "pie"}, {"type": "pie"}]])
 
         # Get chunk size distributions
-        read_chunks = self.data_processor.get_chunk_size_distribution("read", time_range)
-        write_chunks = self.data_processor.get_chunk_size_distribution("write", time_range)
+        read_chunks = self.data_processor.get_chunk_size_distribution("read", df, time_range)
+        write_chunks = self.data_processor.get_chunk_size_distribution("write", df, time_range)
 
         # Add read chunk size pie chart
         fig.add_trace(
@@ -337,17 +357,18 @@ class VisualizationBuilder:
 
         return fig
 
-
 class DashboardApp:
     def __init__(self):
         # Initialize user session storage
         self.user_data = {}
+        # Default cmd range size for rendering
+        self.default_range_size = MAX_CMDS_PER_PAGE  # Can be modified as needed
 
     def get_upload_layout(self):
         """Return the upload layout for the latency visualizer component"""
         return html.Div([
             html.H3("Command Latency Visualizer", className="mt-3 mb-4"),
-            
+
             # Upload component
             dbc.Row([
                 dbc.Col([
@@ -374,7 +395,7 @@ class DashboardApp:
                     html.Div(id='latency-upload-status', className="mt-2")
                 ], width=12)
             ]),
-            
+
             # Submit button (initially disabled)
             dbc.Row([
                 dbc.Col([
@@ -387,18 +408,143 @@ class DashboardApp:
                     )
                 ], width={"size": 3, "offset": 0})
             ]),
-            
+
             # Store for uploaded data
             dcc.Store(id='latency-uploaded-content'),
             dcc.Store(id='latency-user-id'),
-            
+            dcc.Store(id='latency-full-data-processed', data=False),
+            dcc.Store(id='latency-total-cmd-count', data=0),
+            dcc.Store(id='latency-current-range', data=[0, 0]),
+
+            dcc.Interval(id="latency-init-trigger", interval=100, n_intervals=0, max_intervals=1),
+            dcc.Store(id='latency-dashboard-initialized', data=False),
+
             # Dashboard content - hidden until a file is processed
-            html.Div(id='latency-dashboard-content', style={'display': 'none'})
+            html.Div(id='latency-dashboard-content', style={'display': 'none'}, children=self.get_dashboard_content())
         ])
+
+    def get_range_options(self, total_cmds, range_size=None):
+        """Generate range options for dropdown based on total command count"""
+        if range_size is None:
+            range_size = self.default_range_size
+
+        options = []
+        for i in range(0, total_cmds, range_size):
+            end = min(i + range_size, total_cmds)
+            options.append({
+                'label': f"{i:,} - {end:,}",
+                'value': f"{i},{end}"
+            })
+
+        return options
 
     def get_dashboard_content(self):
         """Return the dashboard content component that appears after processing"""
         return html.Div([
+            # Range selection controls
+            dbc.Row([
+                dbc.Col([
+                    html.H5("Command Range Selection", className="mb-2")
+                ], width=12)
+            ]),
+
+            dbc.Row([
+                # Dropdown for predefined ranges
+                dbc.Col([
+                    html.Label("Select Command Range:"),
+                    dcc.Dropdown(
+                        id="latency-range-dropdown",
+                        options=[],  # Will be populated dynamically
+                        placeholder="Select a range...",
+                        className="mb-2"
+                    )
+                ], width=4),
+
+                # Custom range inputs
+                dbc.Col(html.Div([
+                    dbc.Checkbox(
+                        id="latency-use-custom-range",
+                        label="Use Custom Range",
+                        value=False,
+                        className="mb-2"
+                    ),
+                    html.Label("Custom Range:"),
+                    dbc.Row([
+                        dbc.Col(
+                            dbc.Input(
+                                id="latency-custom-start",
+                                type="number",
+                                placeholder="Start",
+                                min=0,
+                                step=1,
+                                disabled=True
+                            ),
+                            width=5
+                        ),
+                        dbc.Col(
+                            html.Span("to", className="pt-2"),
+                            width=2,
+                            className="text-center"
+                        ),
+                        dbc.Col(
+                            dbc.Input(
+                                id="latency-custom-end",
+                                type="number",
+                                placeholder="End",
+                                min=1,
+                                step=1,
+                                disabled=True
+                            ),
+                            width=5
+                        )
+                    ])
+                ])
+                ),
+
+                # Range control buttons
+                dbc.Col([
+                    dbc.Row([
+                        dbc.Col([
+                            dbc.Button(
+                                "Load Selected Range",
+                                id="latency-load-range-button",
+                                color="primary",
+                                className="w-100"
+                            )
+                        ], width=6),
+                        dbc.Col([
+                            dbc.Button(
+                                "Next Range →",
+                                id="latency-next-range-button",
+                                color="secondary",
+                                className="w-100"
+                            )
+                        ], width=6)
+                    ])
+                ], width=4)
+            ]),
+
+            # Status display and range info
+            dbc.Row([
+                dbc.Col([
+                    # Processing status
+                    html.Div(id="latency-processing-status", className="mt-2"),
+                    # Current range display
+                    html.Div(id="latency-current-range-display", className="mt-2 mb-3")
+                ], width=12)
+            ]),
+
+            # Loading indicator
+            dbc.Row([
+                dbc.Col([
+                    dcc.Loading(
+                        id="latency-loading",
+                        type="circle",
+                        children=html.Div(id="latency-loading-output")
+                    )
+                ], width=12, className="text-center mb-3")
+            ]),
+
             # Reset Button
             dbc.Row([
                 dbc.Col([
@@ -443,12 +589,11 @@ class DashboardApp:
             dcc.Store(id="latency-time-range"),
             dcc.Store(id="latency-index-range"),
             dcc.Store(id="latency-last-trigger"),
-            dcc.Interval(id="latency-init-trigger", interval=100, n_intervals=0, max_intervals=1),
         ])
 
     def register_callbacks(self, app):
         """Register all callbacks for the latency visualizer component"""
-        
+
         # Initialize user ID
         @app.callback(
             Output('latency-user-id', 'data'),
@@ -461,14 +606,14 @@ class DashboardApp:
                 new_id = str(uuid.uuid4())
                 return new_id
             return current_id
-        
+
         # Enable process button when file is uploaded
         @app.callback(
             [Output('latency-process-button', 'disabled'),
              Output('latency-uploaded-content', 'data'),
-             Output('latency-upload-status', 'children', allow_duplicate=True)],  # Add this output
+             Output('latency-upload-status', 'children', allow_duplicate=True)],
             Input('latency-upload-data', 'contents'),
-            Input('latency-upload-data', 'filename'),  # Add filename input
+            Input('latency-upload-data', 'filename'),
             prevent_initial_call=True
         )
         def update_upload_status(contents, filename):
@@ -484,12 +629,14 @@ class DashboardApp:
 
             # Store the file contents for processing
             return False, {'contents': contents, 'filename': filename}, upload_message
-        
+
         # Process file and show dashboard when process button is clicked
         @app.callback(
             [Output('latency-dashboard-content', 'style'),
-             Output('latency-upload-status', 'children',allow_duplicate=True),
-             Output('latency-init-trigger', 'n_intervals')],
+             Output('latency-upload-status', 'children', allow_duplicate=True),
+             Output('latency-dashboard-initialized', 'data'),
+             Output('latency-full-data-processed', 'data'),
+             Output('latency-total-cmd-count', 'data')],
             Input('latency-process-button', 'n_clicks'),
             State('latency-uploaded-content', 'data'),
             State('latency-user-id', 'data'),
@@ -497,46 +644,178 @@ class DashboardApp:
         )
         def process_file(n_clicks, uploaded_data, user_id):
             if not n_clicks or not uploaded_data:
-                return {'display': 'none'}, '', 0
+                return {'display': 'none'}, '', False, False, 0
 
             try:
                 # Extract data from the uploaded content
                 contents = uploaded_data['contents']
                 filename = uploaded_data['filename']
-                
+
                 # Decode the file contents
                 content_type, content_string = contents.split(',')
                 decoded = base64.b64decode(content_string)
 
                 # Parse the log file
                 csv_path, df = parse_log_file(io.StringIO(decoded.decode('utf-8')))
+                #print(df.head())
+
+                total_cmd_count = len(df)
 
                 # Store the data for this user
                 self.user_data[user_id] = {
-                    'data_processor': DataProcessor(df),
-                    'viz_builder': None  # Will be initialized later
+                    'full_df': df,  # Store the full dataframe
+                    'data_processor': None,  # Will be initialized with range data
+                    'viz_builder': None,  # Will be initialized later
+                    'current_range': [0, min(self.default_range_size, total_cmd_count)]
                 }
-
-                # Initialize visualization builder
-                self.user_data[user_id]['viz_builder'] = VisualizationBuilder(self.user_data[user_id]['data_processor'])
 
                 return {'display': 'block'}, html.Div([
                     html.H5(f'Successfully parsed: {filename}', style={'color': 'green'}),
+                    html.P(f"Total commands: {total_cmd_count:,}"),
                     html.Hr()
-                ]), 1
+                ]), True, True, total_cmd_count
 
             except Exception as e:
                 return {'display': 'none'}, html.Div([
                     html.H5('Error processing the file', style={'color': 'red'}),
                     html.P(str(e))
-                ]), 0
+                ]), False, False, 0
+
+
+        # Update dropdown options based on total command count
+        @app.callback(
+            Output('latency-range-dropdown', 'options'),
+            Input('latency-total-cmd-count', 'data'),
+            prevent_initial_call=True
+        )
+        def update_dropdown_options(total_cmd_count):
+            if total_cmd_count <= 0:
+                return []
+            return self.get_range_options(total_cmd_count)
+
+        # Update custom range end input max value
+        @app.callback(
+            [Output('latency-custom-start', 'max'),
+             Output('latency-custom-end', 'max')],
+            Input('latency-total-cmd-count', 'data'),
+            prevent_initial_call=True
+        )
+        def update_custom_range_limits(total_cmd_count):
+            if total_cmd_count <= 0:
+                return 0, 0
+            return total_cmd_count - 1, total_cmd_count
+
+        @app.callback(
+            [Output('latency-current-range', 'data'),
+             Output('latency-processing-status', 'children'),
+             Output('latency-loading-output', 'children')],
+            [Input('latency-load-range-button', 'n_clicks'),
+             Input('latency-next-range-button', 'n_clicks'),
+             Input('latency-dashboard-initialized', 'data')],
+            [State('latency-range-dropdown', 'value'),
+             State('latency-custom-start', 'value'),
+             State('latency-custom-end', 'value'),
+             State('latency-current-range', 'data'),
+             State('latency-total-cmd-count', 'data'),
+             State('latency-user-id', 'data'),
+             State('latency-use-custom-range', 'value')],
+            prevent_initial_call=True
+        )
+        def load_selected_range(load_clicks, next_clicks, initialized,
+                                dropdown_value, custom_start, custom_end,
+                                current_range, total_cmd_count, user_id, use_custom_range):
+
+            if not initialized or user_id not in self.user_data:
+                return no_update, no_update, no_update
+
+            trigger = ctx.triggered_id
+
+            if trigger == 'latency-dashboard-initialized':
+                start = 0
+                end = min(self.default_range_size, total_cmd_count)
+
+            elif trigger == 'latency-next-range-button':
+                start = current_range[1]
+                end = min(start + self.default_range_size, total_cmd_count)
+
+                if start >= total_cmd_count:
+                    return no_update, dbc.Alert("Already at the end of the command log.", color="warning"), no_update
+
+            elif trigger == 'latency-load-range-button':
+                if use_custom_range:
+                    if custom_start is None or custom_end is None:
+                        return no_update, dbc.Alert("Custom start/end must be provided.", color="danger"), no_update
+                    if custom_start < 0 or custom_end <= custom_start or custom_end > total_cmd_count:
+                        return no_update, dbc.Alert("Invalid custom range values.", color="danger"), no_update
+                    if custom_end - custom_start > self.default_range_size:
+                        return no_update, dbc.Alert(f"Custom range too large. Max {self.default_range_size} commands.",
+                                                    color="danger"), no_update
+                    start, end = custom_start, custom_end
+                elif dropdown_value:
+                    start, end = map(int, dropdown_value.split(','))
+                else:
+                    return no_update, dbc.Alert("Please select a range or enable custom range input.",
+                                                color="warning"), no_update
+
+            else:
+                return no_update, no_update, no_update
+
+            if start < 0 or end > total_cmd_count or start >= end:
+                return no_update, dbc.Alert("Invalid range selected.", color="danger"), no_update
+
+            try:
+                full_df = self.user_data[user_id]['full_df']
+                full_df = full_df.reset_index().rename(columns={"index": "cmd_index"})
+                range_df = full_df[(full_df['cmd_index'] >= start) & (full_df['cmd_index'] < end)].copy()
+
+                self.user_data[user_id]['data_processor'] = DataProcessor(range_df)
+                self.user_data[user_id]['viz_builder'] = VisualizationBuilder(self.user_data[user_id]['data_processor'])
+                self.user_data[user_id]['current_range'] = [start, end]
+
+                return [start, end], dbc.Alert(f"Successfully loaded commands {start:,} to {end:,}",
+                                               color="success"), None
+
+            except Exception as e:
+                return no_update, dbc.Alert(f"Error processing range: {str(e)}", color="danger"), no_update
+
+        # Update current range display
+        @app.callback(
+            Output('latency-current-range-display', 'children'),
+            Input('latency-current-range', 'data'),
+            Input('latency-total-cmd-count', 'data'),
+            prevent_initial_call=True
+        )
+        def update_range_display(current_range, total_cmd_count):
+            if not current_range or total_cmd_count == 0:
+                return ""
+
+            start, end = current_range
+            return html.Div([
+                html.Strong("Currently Displaying: "),
+                f"Commands {start:,} to {end:,} ",
+                html.Span(f"({end - start:,} commands out of {total_cmd_count:,} total)")
+            ], className="p-2 bg-light border rounded")
+
+        # Enable/disable next range button
+        @app.callback(
+            Output('latency-next-range-button', 'disabled'),
+            Input('latency-current-range', 'data'),
+            Input('latency-total-cmd-count', 'data'),
+            prevent_initial_call=True
+        )
+        def update_next_button_state(current_range, total_cmd_count):
+            if not current_range or total_cmd_count == 0:
+                return True
+
+            start, end = current_range
+            return end >= total_cmd_count
 
         # Update range stores
         @app.callback(
             [Output("latency-time-range", "data"),
              Output("latency-index-range", "data"),
              Output("latency-last-trigger", "data")],
-            [Input("latency-init-trigger", "n_intervals"),
+            [Input("latency-current-range", "data"),
              Input("latency-main-plot", "relayoutData"),
              Input("latency-address-map", "relayoutData"),
              Input("latency-reset-button", "n_clicks")],
@@ -546,20 +825,20 @@ class DashboardApp:
              State('latency-user-id', 'data')],
             prevent_initial_call=True
         )
-        def update_range_stores(n_intervals, relayout_main, relayout_addr, reset_clicks,
+        def update_range_stores(current_range, relayout_main, relayout_addr, reset_clicks,
                                 stored_time_range, stored_idx_range, last_trigger, user_id):
             """This callback updates both time and index range stores based on user interactions"""
-            if user_id not in self.user_data:
+            if not current_range or user_id not in self.user_data:
                 return no_update, no_update, no_update
 
             data_processor = self.user_data[user_id]['data_processor']
             trigger = ctx.triggered_id
 
-            # Initial loading or reset button
-            if trigger == "latency-init-trigger" or trigger == "latency-reset-button":
+            # Range changed or reset button
+            if trigger == "latency-current-range" or trigger == "latency-reset-button":
                 max_end = data_processor.get_max_time()
                 time_range = [0, max_end]
-                idx_range = [0, len(data_processor.df) - 1]
+                idx_range = [current_range[0], current_range[0] + len(data_processor.df) - 1]
                 return time_range, idx_range, "reset"
 
             # Handle main plot time-based updates
@@ -580,6 +859,9 @@ class DashboardApp:
                 if time_range:
                     # Convert time range to index range
                     idx_range = data_processor.time_to_index_range(time_range)
+                    # Adjust indices to be relative to the full dataset
+                    if idx_range:
+                        idx_range = [idx + current_range[0] for idx in idx_range]
                     return time_range, idx_range, "latency-main-plot"
 
             # Handle address map index-based updates
@@ -591,27 +873,30 @@ class DashboardApp:
                 if "xaxis.range[0]" in relayout_addr and "xaxis.range[1]" in relayout_addr:
                     x0 = float(relayout_addr["xaxis.range[0]"])
                     x1 = float(relayout_addr["xaxis.range[1]"])
-                    idx_range = [x0, x1]
+                    # Adjust for current range offset
+                    idx_range = [x0 + current_range[0], x1 + current_range[0]]
                 elif "xaxis.autorange" in relayout_addr and relayout_addr["xaxis.autorange"]:
                     # Reset to full range
-                    idx_range = [0, len(data_processor.df) - 1]
+                    idx_range = [current_range[0], current_range[0] + len(data_processor.df) - 1]
 
                 if idx_range:
                     # Convert index range to time range
-                    time_range = data_processor.index_to_time_range(idx_range)
+                    time_range = data_processor.index_to_time_range(
+                        [idx - current_range[0] for idx in idx_range])
                     return time_range, idx_range, "latency-address-map"
 
             return no_update, no_update, no_update
 
         @app.callback(
             Output("latency-main-plot", "figure"),
-            Input("latency-time-range", "data"),
-            Input("latency-last-trigger", "data"),
+            [Input("latency-time-range", "data"),
+             Input("latency-last-trigger", "data"),
+             Input("latency-current-range", "data")],
             State('latency-user-id', 'data'),
             prevent_initial_call=True
         )
-        def update_main_plot(time_range, last_trigger, user_id):
-            if time_range is None or user_id not in self.user_data:
+        def update_main_plot(time_range, last_trigger, current_range, user_id):
+            if time_range is None or current_range is None or user_id not in self.user_data:
                 return no_update
 
             # Don't update if this plot triggered the change (let plotly handle zoom/pan)
@@ -621,18 +906,36 @@ class DashboardApp:
             data_processor = self.user_data[user_id]['data_processor']
             viz_builder = self.user_data[user_id]['viz_builder']
             filtered_df = data_processor.filter_by_time_range(time_range)
-            return viz_builder.build_main_figure(filtered_df, x_range=time_range)
+            fig = viz_builder.build_main_figure(filtered_df, x_range=time_range)
+
+            # Update title to include range information
+            start, end = current_range
+            fig.update_layout(
+                title_text=f"Command Timeline (Showing commands {start:,} to {end:,})"
+            )
+
+            return fig
+
+        @app.callback(
+            [Output('latency-custom-start', 'disabled'),
+             Output('latency-custom-end', 'disabled')],
+            Input('latency-use-custom-range', 'value'),
+            prevent_initial_call=True
+        )
+        def toggle_custom_range_inputs(use_custom):
+            return not use_custom, not use_custom
 
         @app.callback(
             Output("latency-address-map", "figure"),
-            Input("latency-index-range", "data"),
-            Input("latency-time-range", "data"),
-            Input("latency-last-trigger", "data"),
+            [Input("latency-index-range", "data"),
+             Input("latency-time-range", "data"),
+             Input("latency-last-trigger", "data"),
+             Input("latency-current-range", "data")],
             State('latency-user-id', 'data'),
             prevent_initial_call=True
         )
-        def update_address_map(idx_range, time_range, last_trigger, user_id):
-            if time_range is None or user_id not in self.user_data:
+        def update_address_map(idx_range, time_range, last_trigger, current_range, user_id):
+            if time_range is None or current_range is None or user_id not in self.user_data:
                 return no_update
 
             # Don't update if this plot triggered the change (let plotly handle zoom/pan)
@@ -642,17 +945,33 @@ class DashboardApp:
             data_processor = self.user_data[user_id]['data_processor']
             viz_builder = self.user_data[user_id]['viz_builder']
             filtered_df = data_processor.filter_by_time_range(time_range)
-            return viz_builder.build_address_map(filtered_df, idx_range=idx_range)
+
+            # Adjust index range to be relative to the current range
+            if idx_range:
+                rel_idx_range = [idx - current_range[0] for idx in idx_range]
+            else:
+                rel_idx_range = None
+
+            fig = viz_builder.build_address_map(filtered_df, idx_range=rel_idx_range)
+
+            # Update title to include range information
+            start, end = current_range
+            fig.update_layout(
+                title_text=f"Address Map (Showing commands {start:,} to {end:,})"
+            )
+
+            return fig
 
         @app.callback(
             [Output("latency-cmd-count-chart", "figure"),
              Output("latency-chunk-size-charts", "figure")],
-            Input("latency-time-range", "data"),
+            [Input("latency-time-range", "data"),
+             Input("latency-current-range", "data")],
             State('latency-user-id', 'data'),
             prevent_initial_call=True
         )
-        def update_command_charts(time_range, user_id):
-            if time_range is None or user_id not in self.user_data:
+        def update_command_charts(time_range, current_range, user_id):
+            if time_range is None or current_range is None or user_id not in self.user_data:
                 return no_update, no_update
 
             data_processor = self.user_data[user_id]['data_processor']
@@ -662,17 +981,27 @@ class DashboardApp:
             count_chart = viz_builder.build_cmd_count_bar_chart(filtered_df)
             chunk_charts = viz_builder.build_chunk_size_charts(filtered_df, time_range)
 
+            # Update titles to include range information
+            start, end = current_range
+            count_chart.update_layout(
+                title_text=f"Command Count Distribution (Commands {start:,} to {end:,})"
+            )
+            chunk_charts.update_layout(
+                title_text=f"Chunk Size Distribution (Commands {start:,} to {end:,})"
+            )
+
             return count_chart, chunk_charts
 
         @app.callback(
             Output("latency-stats-display", "children"),
-            Input("latency-time-range", "data"),
+            [Input("latency-time-range", "data"),
+             Input("latency-current-range", "data")],
             State('latency-user-id', 'data'),
             prevent_initial_call=True
         )
-        def update_stats_display(time_range, user_id):
+        def update_stats_display(time_range, current_range, user_id):
             """Display command-wise statistics based on the selected time range"""
-            if time_range is None or user_id not in self.user_data:
+            if time_range is None or current_range is None or user_id not in self.user_data:
                 return no_update
 
             data_processor = self.user_data[user_id]['data_processor']
@@ -733,8 +1062,20 @@ class DashboardApp:
                 ], className="stat-item mt-2")
             )
 
+            # Add command range info
+            stats.append(html.Hr())
+            stats.append(
+                html.Div([
+                    html.Div("Command Range:"),
+                    html.Div([
+                        f"{current_range[0]:,} - {current_range[1]:,} ",
+                        html.Span(f"({current_range[1] - current_range[0]:,} commands)")
+                    ], style={"fontSize": "0.9em", "opacity": "0.8"})
+                ], className="stat-item mt-2")
+            )
+
             return stats
-        
+        '''
         # Add dashboard content when process button is clicked
         @app.callback(
             Output('latency-dashboard-content', 'children'),
@@ -745,7 +1086,7 @@ class DashboardApp:
             if not n_clicks:
                 return html.Div()
             return self.get_dashboard_content()
-
+        '''
 
 if __name__ == "__main__":
     # For standalone testing
