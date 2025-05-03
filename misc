@@ -992,3 +992,34 @@ fig.update_layout(
 )
 
 fig.show()
+
+
+
+## clear
+
+@app.callback(
+            [Output('latency-dashboard-content', 'style', allow_duplicate=True),
+             Output('latency-main-plot', 'figure', allow_duplicate=True),
+             Output('latency-address-map', 'figure', allow_duplicate=True),
+             Output('latency-cmd-count-chart', 'figure', allow_duplicate=True),
+             Output('latency-chunk-size-charts', 'figure', allow_duplicate=True),
+             Output('latency-current-range-display', 'children', allow_duplicate=True),
+             Output('latency-processing-status', 'children', allow_duplicate=True),
+             Output('latency-stats-display', 'children', allow_duplicate=True),
+             Output('latency-load-range-button', 'disabled', allow_duplicate=True),
+             Output('latency-next-range-button', 'disabled', allow_duplicate=True)],
+            Input('latency-upload-data', 'contents'),
+            prevent_initial_call=True
+        )
+        def clear_on_upload(contents):
+
+            print(f"in clear_on_upload")
+            empty_fig = go.Figure()
+            return (
+                {'display': 'none'},
+                #empty_fig, empty_fig, empty_fig, empty_fig,
+                None,None,None,None,
+                "", "", "",
+                True, True
+            )
+
